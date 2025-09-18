@@ -1,0 +1,124 @@
+#!/bin/bash
+#
+# Claude Cost Helper - Simplified cost tracking commands
+# 
+# Usage examples:
+#   claude-cost start "JWT Authentication Development"
+#   claude-cost log 1500 800 "Implementing token validation"
+#   claude-cost end
+#   claude-cost report
+#
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+TRACKER="$SCRIPT_DIR/claude-cost-tracker.py"
+
+case "$1" in
+    "start")
+        if [[ -z "$2" ]]; then
+            echo "Usage: claude-cost start \"Session Name\" [context]"
+            exit 1
+        fi
+        python3 "$TRACKER" start --session-name "$2" --context "${3:-}"
+        ;;
+    
+    "log")
+        if [[ -z "$2" || -z "$3" ]]; then
+            echo "Usage: claude-cost log <tokens_in> <tokens_out> [context] [model]"
+            echo "Example: claude-cost log 1500 800 \"Implementing JWT validation\" claude-sonnet-4"
+            exit 1
+        fi
+        python3 "$TRACKER" log --tokens-in "$2" --tokens-out "$3" --context "${4:-}" --model "${5:-claude-sonnet-4}"
+        ;;
+    
+    "end")
+        python3 "$TRACKER" end
+        ;;
+    
+    "status")
+        python3 "$TRACKER" status
+        ;;
+    
+    "quick")
+        # Quick logging with common patterns
+        case "$2" in
+            "code"|"review"|"chat"|"debug")
+                python3 "$TRACKER" quick "$2" --context "${3:-}"
+                ;;
+            *)
+                echo "Quick patterns: code, review, chat, debug"
+                echo "Usage: claude-cost quick <pattern> [context]"
+                ;;
+        esac
+        ;;
+    
+    "report")
+        # Show current session status or list recent reports
+        if python3 "$TRACKER" status 2>/dev/null | grep -q "Active Session"; then
+            python3 "$TRACKER" status
+        else
+            echo "📄 Recent session reports:"
+            ls -lt .claude-sessions/session_report_*.md 2>/dev/null | head -5 | while read -r line; do
+                file=$(echo "$line" | awk '{print $NF}')
+                echo "  - $file"
+            done
+        fi
+        ;;
+    
+    "summary")
+        # Generate cost summary across sessions
+        echo "💰 Cost Summary (Last 30 Days)"
+        echo "================================"
+        
+        total_cost=0
+        session_count=0
+        
+        for report in .claude-sessions/session_report_*.md; do
+            if [[ -f "$report" ]]; then
+                cost=$(grep "**Total Cost**" "$report" | sed 's/.*$\([0-9.]*\).*/\1/' | head -1)
+                if [[ -n "$cost" ]]; then
+                    total_cost=$(echo "$total_cost + $cost" | bc -l)
+                    session_count=$((session_count + 1))
+                fi
+            fi
+        done
+        
+        echo "Total Sessions: $session_count"
+        echo "Total Cost: \$$(printf "%.4f" $total_cost)"
+        if [[ $session_count -gt 0 ]]; then
+            avg_cost=$(echo "$total_cost / $session_count" | bc -l)
+            echo "Average per Session: \$$(printf "%.4f" $avg_cost)"
+        fi
+        ;;
+    
+    "help"|"--help"|"")
+        echo "Claude Cost Tracker - Track Claude Code session costs"
+        echo ""
+        echo "Commands:"
+        echo "  start <name> [context]     - Start new session"
+        echo "  log <in> <out> [context]   - Log token usage"
+        echo "  quick <pattern> [context]  - Quick log (code/review/chat/debug)"
+        echo "  status                     - Show current session"
+        echo "  end                        - End session & generate report"
+        echo "  report                     - Show recent reports"
+        echo "  summary                    - Cost summary across sessions"
+        echo "  help                       - Show this help"
+        echo ""
+        echo "Examples:"
+        echo "  claude-cost start \"JWT Development Session\""
+        echo "  claude-cost log 1500 800 \"Implementing token validation\""
+        echo "  claude-cost quick code \"Added auth middleware\""
+        echo "  claude-cost end"
+        echo ""
+        echo "Token Estimation Guide:"
+        echo "  ~4 characters = 1 token"
+        echo "  1000 tokens ≈ 750 words"
+        echo "  Typical chat: 500-1500 input, 800-2000 output"
+        echo "  Code generation: 1000-3000 input, 2000-5000 output"
+        ;;
+    
+    *)
+        echo "Unknown command: $1"
+        echo "Use 'claude-cost help' for available commands"
+        exit 1
+        ;;
+esac

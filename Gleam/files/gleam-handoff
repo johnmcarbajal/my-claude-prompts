@@ -1,0 +1,179 @@
+#!/bin/bash
+# gleam-handoff - Coordinate between Gleam agents
+# Usage: gleam-handoff --to {expert|reviewer} --context "reason"
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+GLEAM_CONTEXT_DIR="${PROJECT_ROOT}/.gleam_context"
+
+# Create context directory if it doesn't exist
+mkdir -p "${GLEAM_CONTEXT_DIR}/handoffs"
+
+# Parse arguments
+TARGET_AGENT=""
+CONTEXT_MESSAGE=""
+FORCE_ANALYSIS=false
+
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --to)
+            TARGET_AGENT="$2"
+            shift 2
+            ;;
+        --context)
+            CONTEXT_MESSAGE="$2"
+            shift 2
+            ;;
+        --force-analysis)
+            FORCE_ANALYSIS=true
+            shift
+            ;;
+        *)
+            echo "Unknown option: $1"
+            exit 1
+            ;;
+    esac
+done
+
+if [[ -z "$TARGET_AGENT" ]]; then
+    echo "Usage: gleam-handoff --to {expert|reviewer} --context \"reason\""
+    exit 1
+fi
+
+# Validate target agent
+case "$TARGET_AGENT" in
+    expert|reviewer)
+        ;;
+    *)
+        echo "Invalid target agent. Use 'expert' or 'reviewer'"
+        exit 1
+        ;;
+esac
+
+echo "🔄 Preparing handoff to gleam-${TARGET_AGENT}..."
+
+# Create handoff context
+create_handoff_context() {
+    local target="$1"
+    local context="$2"
+    local timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+    local handoff_file="${GLEAM_CONTEXT_DIR}/handoffs/.gleam_handoff.json"
+    
+    # Capture current Gleam project state
+    local project_status=""
+    if [[ -f "gleam.toml" ]]; then
+        project_status="gleam_project"
+    else
+        project_status="no_gleam_project"
+    fi
+    
+    # Get git information
+    local git_branch=$(git branch --show-current 2>/dev/null || echo "unknown")
+    local git_commit=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")
+    local git_status=$(git status --porcelain 2>/dev/null | wc -l)
+    
+    # Check for recent Gleam changes
+    local gleam_files_changed=0
+    if git rev-parse --verify HEAD~5 >/dev/null 2>&1; then
+        gleam_files_changed=$(git diff --name-only HEAD~5..HEAD | grep -c "\.gleam$" || echo "0")
+    fi
+    
+    # Generate handoff JSON
+    cat > "$handoff_file" <<EOF
+{
+  "handoff_timestamp": "$timestamp",
+  "source_agent": "gleam-coordinator",
+  "target_agent": "gleam-${target}",
+  "context_message": "$context",
+  "force_analysis": $FORCE_ANALYSIS,
+  "project_status": {
+    "type": "$project_status",
+    "git_branch": "$git_branch",
+    "git_commit": "$git_commit",
+    "uncommitted_changes": $git_status,
+    "gleam_files_modified": $gleam_files_changed
+  },
+  "handoff_reason": "$(determine_handoff_reason $target)",
+  "expected_actions": $(generate_expected_actions $target)
+}
+EOF
+    
+    echo "📋 Handoff context created: $handoff_file"
+    
+    # Show handoff summary
+    echo ""
+    echo "📊 Handoff Summary:"
+    echo "   Target: gleam-$target"
+    echo "   Reason: $context"
+    echo "   Project: $project_status"
+    echo "   Branch: $git_branch ($git_commit)"
+    echo "   Changes: $git_status uncommitted, $gleam_files_changed Gleam files modified"
+}
+
+determine_handoff_reason() {
+    local target="$1"
+    case "$target" in
+        expert)
+            if [[ -n "$CONTEXT_MESSAGE" ]]; then
+                echo "development_needed"
+            else
+                echo "architecture_design"
+            fi
+            ;;
+        reviewer)
+            if [[ $FORCE_ANALYSIS == true ]]; then
+                echo "forced_review"
+            else
+                echo "code_review"
+            fi
+            ;;
+    esac
+}
+
+generate_expected_actions() {
+    local target="$1"
+    case "$target" in
+        expert)
+            cat <<'EOF'
+[
+  "analyze_project_structure",
+  "design_architecture",
+  "implement_core_types",
+  "create_functional_patterns",
+  "setup_actor_model",
+  "write_tests"
+]
+EOF
+            ;;
+        reviewer)
+            cat <<'EOF'
+[
+  "validate_functional_patterns",
+  "check_type_safety",
+  "review_pattern_matching",
+  "assess_error_handling",
+  "evaluate_actor_model",
+  "performance_analysis"
+]
+EOF
+            ;;
+    esac
+}
+
+# Execute handoff creation
+create_handoff_context "$TARGET_AGENT" "$CONTEXT_MESSAGE"
+
+# Copy handoff file to expected location for target agent
+cp "${GLEAM_CONTEXT_DIR}/handoffs/.gleam_handoff.json" "./.gleam_handoff.json"
+
+echo ""
+echo "✅ Handoff complete! Run gleam-${TARGET_AGENT} to activate the target agent."
+
+# Optional: Auto-activate target agent if requested
+if [[ "${AUTO_ACTIVATE:-false}" == "true" ]]; then
+    echo ""
+    echo "🚀 Auto-activating gleam-${TARGET_AGENT}..."
+    exec "gleam-${TARGET_AGENT}"
+fi

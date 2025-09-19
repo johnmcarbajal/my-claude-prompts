@@ -1,0 +1,304 @@
+#!/bin/bash
+# gleam-context-manager - CLI for Gleam-specific context management
+# Usage: gleam-context-manager {status|coordinate|functional-health|capture|synthesize|handoff} [args]
+
+set -euo pipefail
+
+PROJECT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+GLEAM_CONTEXT_DIR="${PROJECT_ROOT}/.gleam_context"
+
+# Ensure context directories exist
+mkdir -p "${GLEAM_CONTEXT_DIR}"/{handoffs,specialists,archives,functional_patterns,type_decisions,actor_designs}
+
+# Validate Gleam environment
+validate_gleam_environment() {
+    echo "🦄 Validating Gleam Context Manager Environment..."
+    
+    # Check if we're in a Gleam project
+    if [[ ! -f "gleam.toml" ]]; then
+        echo "❌ Not a Gleam project (no gleam.toml found)"
+        return 1
+    fi
+    
+    # Validate Gleam toolchain
+    if ! command -v gleam >/dev/null 2>&1; then
+        echo "❌ Gleam not installed"
+        return 1
+    fi
+    
+    # Check Erlang/OTP
+    if ! command -v erl >/dev/null 2>&1; then
+        echo "❌ Erlang/OTP not installed"
+        return 1
+    fi
+    
+    # Check git repository
+    if ! git rev-parse --git-dir >/dev/null 2>&1; then
+        echo "❌ Not in a git repository"
+        return 1
+    fi
+    
+    # Detect project characteristics
+    PROJECT_TARGET=$(get_gleam_target)
+    FUNCTIONAL_PATTERNS=$(detect_functional_patterns)
+    
+    echo "✅ Environment valid. Gleam project targeting: $PROJECT_TARGET"
+    echo "🎯 Detected patterns: $FUNCTIONAL_PATTERNS"
+}
+
+get_gleam_target() {
+    if grep -q "target.*javascript" gleam.toml 2>/dev/null; then
+        echo "javascript"
+    else
+        echo "erlang"
+    fi
+}
+
+detect_functional_patterns() {
+    local patterns=()
+    
+    # Check for actor patterns
+    if find . -name "*.gleam" -exec grep -l "actor\|Subject\|process\." {} \; | head -1 >/dev/null 2>&1; then
+        patterns+=("actors")
+    fi
+    
+    # Check for web patterns
+    if find . -name "*.gleam" -exec grep -l "mist\|wisp\|lustre" {} \; | head -1 >/dev/null 2>&1; then
+        patterns+=("web")
+    fi
+    
+    # Check for database patterns
+    if find . -name "*.gleam" -exec grep -l "pgo\|sqlight" {} \; | head -1 >/dev/null 2>&1; then
+        patterns+=("database")
+    fi
+    
+    # Join array elements with commas
+    IFS=','; echo "${patterns[*]}"
+}
+
+check_gleam_context_health() {
+    echo "🏥 Gleam Context Health:"
+    
+    # Check for active handoffs
+    if [[ -f ".gleam_handoff.json" ]]; then
+        echo "📋 Active handoff detected:"
+        local target=$(jq -r '.target_agent // "unknown"' .gleam_handoff.json 2>/dev/null || echo "unknown")
+        local timestamp=$(jq -r '.handoff_timestamp // "unknown"' .gleam_handoff.json 2>/dev/null || echo "unknown")
+        echo "   Target: $target"
+        echo "   Created: $timestamp"
+    else
+        echo "✅ No active handoffs"
+    fi
+    
+    # Check functional pattern health
+    echo ""
+    echo "🔬 Functional Pattern Health:"
+    
+    # Check for panic patterns
+    local panic_count=$(find . -name "*.gleam" -exec grep -l "panic\|todo()" {} \; 2>/dev/null | wc -l)
+    if [[ $panic_count -gt 0 ]]; then
+        echo "⚠️  $panic_count files contain panic patterns"
+    else
+        echo "✅ No panic patterns detected"
+    fi
+    
+    # Check Result type usage
+    local result_count=$(find . -name "*.gleam" -exec grep -l "Result\|Error\|Ok" {} \; 2>/dev/null | wc -l)
+    if [[ $result_count -gt 0 ]]; then
+        echo "✅ $result_count files use Result types"
+    else
+        echo "⚠️  No Result type usage detected"
+    fi
+    
+    # Check actor model usage
+    local actor_count=$(find . -name "*.gleam" -exec grep -l "actor\." {} \; 2>/dev/null | wc -l)
+    if [[ $actor_count -gt 0 ]]; then
+        echo "🎭 $actor_count files use actor patterns"
+    else
+        echo "ℹ️  No actor patterns detected"
+    fi
+}
+
+coordinate_with_agent() {
+    local agent="$1"
+    local task_type="$2"
+    local context="${3:-CLI coordination request}"
+    
+    case "$agent" in
+        expert)
+            echo "🦄 Coordinating with gleam-expert for: $task_type"
+            prepare_expert_handoff "$task_type" "$context"
+            ;;
+        reviewer)
+            echo "🔍 Coordinating with gleam-code-reviewer for: $task_type"
+            prepare_reviewer_handoff "$task_type" "$context"
+            ;;
+        *)
+            echo "❌ Invalid agent. Use 'expert' or 'reviewer'"
+            return 1
+            ;;
+    esac
+}
+
+prepare_expert_handoff() {
+    local task_type="$1"
+    local context="$2"
+    local timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+    
+    cat > "${GLEAM_CONTEXT_DIR}/handoffs/to-gleam-expert.json" <<EOF
+{
+  "handoff_timestamp": "$timestamp",
+  "source_agent": "gleam-context-manager",
+  "target_agent": "gleam-expert",
+  "task_type": "$task_type",
+  "context_message": "$context",
+  "coordination_mode": "delegate",
+  "project_target": "$(get_gleam_target)",
+  "functional_patterns": "$(detect_functional_patterns)",
+  "handoff_priority": "high"
+}
+EOF
+    
+    cp "${GLEAM_CONTEXT_DIR}/handoffs/to-gleam-expert.json" "./.gleam_handoff.json"
+    echo "✅ Expert handoff prepared: $task_type"
+}
+
+prepare_reviewer_handoff() {
+    local task_type="$1"
+    local context="$2" 
+    local timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+    
+    cat > "${GLEAM_CONTEXT_DIR}/handoffs/to-gleam-reviewer.json" <<EOF
+{
+  "handoff_timestamp": "$timestamp",
+  "source_agent": "gleam-context-manager",
+  "target_agent": "gleam-code-reviewer",
+  "review_type": "$task_type",
+  "context_message": "$context",
+  "coordination_mode": "delegate",
+  "project_target": "$(get_gleam_target)",
+  "functional_patterns": "$(detect_functional_patterns)",
+  "handoff_priority": "high"
+}
+EOF
+    
+    cp "${GLEAM_CONTEXT_DIR}/handoffs/to-gleam-reviewer.json" "./.gleam_handoff.json"
+    echo "✅ Reviewer handoff prepared: $task_type"
+}
+
+assess_functional_health() {
+    echo "🔬 Functional Programming Health Assessment:"
+    
+    echo ""
+    echo "📊 Type System Usage:"
+    local custom_types=$(find . -name "*.gleam" -exec grep -c "pub type\|type " {} \; 2>/dev/null | awk '{sum+=$1} END {print sum+0}')
+    echo "   Custom types defined: $custom_types"
+    
+    local opaque_types=$(find . -name "*.gleam" -exec grep -c "pub opaque type" {} \; 2>/dev/null | awk '{sum+=$1} END {print sum+0}')
+    echo "   Opaque types: $opaque_types"
+    
+    echo ""
+    echo "🎯 Pattern Matching Analysis:"
+    local case_expressions=$(find . -name "*.gleam" -exec grep -c "case " {} \; 2>/dev/null | awk '{sum+=$1} END {print sum+0}')
+    echo "   Case expressions: $case_expressions"
+    
+    local catch_alls=$(find . -name "*.gleam" -exec grep -c "case.*_" {} \; 2>/dev/null | awk '{sum+=$1} END {print sum+0}')
+    echo "   Catch-all patterns: $catch_alls"
+    
+    echo ""
+    echo "⚠️ Error Handling Patterns:"
+    local result_usage=$(find . -name "*.gleam" -exec grep -c "Result(" {} \; 2>/dev/null | awk '{sum+=$1} END {print sum+0}')
+    echo "   Result type usage: $result_usage"
+    
+    local option_usage=$(find . -name "*.gleam" -exec grep -c "Option(" {} \; 2>/dev/null | awk '{sum+=$1} END {print sum+0}')
+    echo "   Option type usage: $option_usage"
+    
+    local panic_usage=$(find . -name "*.gleam" -exec grep -c "panic\|todo()\|assert" {} \; 2>/dev/null | awk '{sum+=$1} END {print sum+0}')
+    if [[ $panic_usage -gt 0 ]]; then
+        echo "   ⚠️  Panic patterns: $panic_usage (should be eliminated)"
+    else
+        echo "   ✅ Panic patterns: 0"
+    fi
+    
+    echo ""
+    echo "🎭 Actor Model Usage:"
+    local actor_usage=$(find . -name "*.gleam" -exec grep -c "actor\." {} \; 2>/dev/null | awk '{sum+=$1} END {print sum+0}')
+    if [[ $actor_usage -gt 0 ]]; then
+        echo "   Actor patterns: $actor_usage"
+        
+        local supervision=$(find . -name "*.gleam" -exec grep -c "supervisor\|start_link" {} \; 2>/dev/null | awk '{sum+=$1} END {print sum+0}')
+        echo "   Supervision patterns: $supervision"
+    else
+        echo "   No actor patterns detected"
+    fi
+}
+
+# Main command dispatcher
+GCM_CMD="$1"
+shift
+
+case "$GCM_CMD" in
+    "status")
+        validate_gleam_environment
+        check_gleam_context_health
+        echo ""
+        echo "## Active Gleam Specialists"
+        if [[ -f "${GLEAM_CONTEXT_DIR}/specialists/active-agents.json" ]]; then
+            cat "${GLEAM_CONTEXT_DIR}/specialists/active-agents.json"
+        else
+            echo "[]"
+        fi
+        ;;
+    "coordinate")
+        AGENT="${1:-}"
+        TASK_TYPE="${2:-}"
+        if [[ -z "$AGENT" || -z "$TASK_TYPE" ]]; then
+            echo "Usage: gleam-context-manager coordinate {expert|reviewer} TASK_TYPE [CONTEXT]"
+            exit 1
+        fi
+        CONTEXT="${3:-CLI coordination request}"
+        coordinate_with_agent "$AGENT" "$TASK_TYPE" "$CONTEXT"
+        ;;
+    "functional-health")
+        echo "🔬 Assessing functional programming health..."
+        assess_functional_health
+        ;;
+    "capture")
+        CONTEXT_TYPE="${1:-full}"
+        echo "📸 Capturing Gleam functional context..."
+        echo "Context type: $CONTEXT_TYPE"
+        validate_gleam_environment
+        ;;
+    "synthesize")
+        echo "🧠 Synthesizing project context..."
+        validate_gleam_environment
+        assess_functional_health
+        ;;
+    "handoff")
+        TARGET_AGENT="${1:-}"
+        TASK_TYPE="${2:-}"
+        CONTEXT="${3:-CLI handoff request}"
+        if [[ -z "$TARGET_AGENT" || -z "$TASK_TYPE" ]]; then
+            echo "Usage: gleam-context-manager handoff {expert|reviewer} TASK_TYPE [CONTEXT]"
+            exit 1
+        fi
+        echo "🔄 Processing handoff to $TARGET_AGENT..."
+        coordinate_with_agent "$TARGET_AGENT" "$TASK_TYPE" "$CONTEXT"
+        ;;
+    *)
+        echo "Usage: gleam-context-manager {status|coordinate|functional-health|capture|synthesize|handoff} [args]"
+        echo ""
+        echo "Commands:"
+        echo "  status                    - Check environment and context health"
+        echo "  coordinate AGENT TASK     - Coordinate with gleam-expert or gleam-code-reviewer"
+        echo "  functional-health         - Assess functional programming patterns"
+        echo "  capture [TYPE]            - Capture current functional context"
+        echo "  synthesize               - Generate project context synthesis"
+        echo "  handoff AGENT TASK [CTX]  - Create handoff to specialist agent"
+        echo ""
+        echo "Examples:"
+        echo "  gleam-context-manager coordinate expert new_implementation"
+        echo "  gleam-context-manager coordinate reviewer functional_patterns"
+        echo "  gleam-context-manager handoff expert architecture_design 'Design user auth system'"
+        ;;
+esac

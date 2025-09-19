@@ -1,0 +1,128 @@
+#!/bin/bash
+# gleam-reviewer - Activate the Gleam code review agent
+# Usage: gleam-reviewer [--force-analysis]
+
+set -euo pipefail
+
+PROJECT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+GLEAM_CONTEXT_DIR="${PROJECT_ROOT}/.gleam_context"
+
+echo "🔍✨ Activating Gleam Code Review Agent..."
+
+# Check for handoff context
+if [[ -f ".gleam_handoff.json" ]]; then
+    echo "💥 Processing handoff from gleam-expert"
+    HANDOFF_CONTEXT=$(cat .gleam_handoff.json)
+    echo "Context: $(echo "$HANDOFF_CONTEXT" | jq -r '.context_message // "No message"')"
+    echo "---"
+fi
+
+# Create agent status file
+mkdir -p "${GLEAM_CONTEXT_DIR}/active"
+cat > "${GLEAM_CONTEXT_DIR}/active/gleam-reviewer.json" <<EOF
+{
+  "agent": "gleam-reviewer",
+  "activated_at": "$(date -u +"%Y-%m-%dT%H:%M:%SZ")",
+  "project_root": "$PROJECT_ROOT",
+  "mode": "review"
+}
+EOF
+
+# Execute the mandatory activation protocol from the reviewer specification
+echo "✨ Analyzing Gleam project changes..."
+git status --porcelain || echo "Not in a git repository"
+echo ""
+
+# Analyze recent changes with focus on functional patterns
+echo "🔍 Functional pattern analysis:"
+git diff --name-status HEAD~5..HEAD 2>/dev/null | while read status file; do
+    case "$file" in
+        gleam.toml)
+            echo "📦 MANIFEST: $status $file"
+            ;;
+        *.gleam)
+            echo "✨ GLEAM_CODE: $status $file"
+            # Check for functional pattern concerns
+            if git show "HEAD:$file" 2>/dev/null | grep -q "panic\|todo\|assert\|exit"; then
+                echo "   ⚠️  PANIC_PRONE: Contains panic/todo/assert patterns"
+            fi
+            if git show "HEAD:$file" 2>/dev/null | grep -q "case.*_"; then
+                echo "   🔍 PATTERN_MATCHING: Non-exhaustive patterns detected"
+            fi
+            ;;
+        *config*|*.toml|*.json)
+            echo "⚙️ CONFIG: $status $file"
+            ;;
+        test/*|*_test.gleam)
+            echo "🧪 TEST: $status $file"
+            ;;
+    esac
+done 2>/dev/null || echo "No recent changes to analyze"
+echo ""
+
+# Critical functional safety analysis
+echo "🚨 Critical functional safety scan:"
+if git diff HEAD~3..HEAD -- "*.gleam" 2>/dev/null | grep -n -E "(panic|todo\(\)|assert|exit)"; then
+    echo "⚠️  PANIC-PRONE CODE DETECTED - MANDATORY REVIEW"
+else
+    echo "✅ No panic-prone patterns detected"
+fi
+
+if git diff HEAD~3..HEAD -- "*.gleam" 2>/dev/null | grep -E "(case.*_|let.*=.*case)"; then
+    echo "⚠️  PATTERN MATCHING COMPLEXITY - REVIEW FOR EXHAUSTIVENESS"
+else
+    echo "✅ No complex pattern matching detected"
+fi
+
+if git diff HEAD~3..HEAD -- "*.gleam" 2>/dev/null | grep -E "Error\(.*\)|Ok\(.*\)"; then
+    echo "✅ Result type usage detected - good error handling patterns"
+fi
+echo ""
+
+# Actor model integrity check
+echo "🎭 Actor model analysis:"
+if git diff HEAD~3..HEAD -- "*.gleam" 2>/dev/null | grep -E "(actor\.|Subject\(|process\.)"; then
+    echo "📡 ACTOR PATTERNS DETECTED"
+    if git diff HEAD~3..HEAD -- "*.gleam" 2>/dev/null | grep -E "(actor\.call|actor\.send)"; then
+        echo "   📞 Message passing patterns found"
+    fi
+    if git diff HEAD~3..HEAD -- "*.gleam" 2>/dev/null | grep -E "(supervisor|start_link)"; then
+        echo "   🌳 Supervision tree patterns found"
+    fi
+else
+    echo "ℹ️ No actor model patterns detected"
+fi
+echo ""
+
+# Dependency analysis
+echo "📦 Dependency analysis:"
+if git diff HEAD~3..HEAD gleam.toml 2>/dev/null | grep "^\+"; then
+    echo "📋 New dependencies added:"
+    git diff HEAD~3..HEAD gleam.toml | grep "^\+" | grep -v "^\+++" | sed 's/^\+//'
+    echo "⚠️  FUNCTIONAL PATTERN REVIEW REQUIRED for new dependencies"
+else
+    echo "✅ No new dependencies"
+fi
+echo ""
+
+# Show code changes for analysis
+echo "📊 Code changes for review:"
+if git diff --unified=3 HEAD~3..HEAD -- "*.gleam" >/dev/null 2>&1; then
+    git diff --unified=3 HEAD~3..HEAD -- "*.gleam" | head -100
+    if [[ $(git diff HEAD~3..HEAD -- "*.gleam" | wc -l) -gt 100 ]]; then
+        echo "... (truncated - large changeset detected)"
+    fi
+else
+    echo "No recent Gleam code changes to review"
+fi
+echo ""
+
+echo "🔍 Gleam Code Reviewer ready for:"
+echo "   • Functional pattern validation"
+echo "   • Type safety assessment"
+echo "   • Pattern matching review"
+echo "   • Error handling analysis"
+echo "   • Actor model correctness"
+echo "   • Performance evaluation"
+echo ""
+echo "💡 Ready to analyze, validate, and optimize!"

@@ -1,0 +1,152 @@
+#!/bin/bash
+# gleam-expert - Activate the Gleam development expert agent
+# Usage: gleam-expert [--skip-analysis]
+
+set -euo pipefail
+
+PROJECT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+GLEAM_CONTEXT_DIR="${PROJECT_ROOT}/.gleam_context"
+
+echo "🦀✨ Activating Gleam Expert Agent..."
+
+# Check for handoff context
+if [[ -f ".gleam_handoff.json" ]]; then
+    echo "💥 Processing handoff from coordinator"
+    HANDOFF_CONTEXT=$(cat .gleam_handoff.json)
+    echo "Context: $(echo "$HANDOFF_CONTEXT" | jq -r '.context_message // "No message"')"
+    echo "---"
+fi
+
+# Create agent status file
+mkdir -p "${GLEAM_CONTEXT_DIR}/active"
+cat > "${GLEAM_CONTEXT_DIR}/active/gleam-expert.json" <<EOF
+{
+  "agent": "gleam-expert",
+  "activated_at": "$(date -u +"%Y-%m-%dT%H:%M:%SZ")",
+  "project_root": "$PROJECT_ROOT",
+  "mode": "development"
+}
+EOF
+
+# Skip analysis if requested
+if [[ "${1:-}" == "--skip-analysis" ]]; then
+    echo "⏩ Skipping initial analysis"
+    echo "🎯 Gleam Expert ready for development tasks"
+    exit 0
+fi
+
+# Execute the mandatory activation protocol from the expert specification
+echo "✨ Analyzing Gleam project state..."
+
+# Check git status
+echo "📊 Git repository status:"
+git status --porcelain || echo "Not in a git repository"
+echo ""
+
+# Analyze recent changes with focus on Gleam patterns
+echo "🔍 Gleam code analysis:"
+if git log --oneline -5 >/dev/null 2>&1; then
+    git log --oneline -5
+    echo ""
+    
+    # Look for Gleam files in recent changes
+    echo "📁 Recent Gleam file changes:"
+    git diff --name-status HEAD~5..HEAD 2>/dev/null | while read status file; do
+        case "$file" in
+            gleam.toml)
+                echo "📦 MANIFEST: $status $file"
+                ;;
+            *.gleam)
+                echo "✨ GLEAM_CODE: $status $file"
+                # Check for functional pattern concerns in the file
+                if git show "HEAD:$file" 2>/dev/null | grep -q "panic\|todo\|assert"; then
+                    echo "   ⚠️  PANIC_PRONE: Contains panic/todo/assert patterns"
+                fi
+                if git show "HEAD:$file" 2>/dev/null | grep -q "case.*_"; then
+                    echo "   🔍 PATTERN_MATCHING: Catch-all patterns detected"
+                fi
+                ;;
+            test/*|*_test.gleam)
+                echo "🧪 TEST: $status $file"
+                ;;
+            *config*|*.toml|*.json)
+                echo "⚙️ CONFIG: $status $file"
+                ;;
+        esac
+    done
+else
+    echo "No git history available"
+fi
+echo ""
+
+# Critical functional safety analysis
+echo "🚨 Functional safety scan:"
+if git diff HEAD~3..HEAD -- "*.gleam" 2>/dev/null | grep -n -E "(panic|todo\(\)|assert)"; then
+    echo "⚠️  PANIC-PRONE CODE DETECTED - NEEDS ATTENTION"
+else
+    echo "✅ No panic-prone patterns detected"
+fi
+
+if git diff HEAD~3..HEAD -- "*.gleam" 2>/dev/null | grep -E "(case.*_|let.*=.*case)"; then
+    echo "⚠️  PATTERN MATCHING COMPLEXITY - REVIEW FOR EXHAUSTIVENESS"
+else
+    echo "✅ No complex pattern matching detected"
+fi
+
+if git diff HEAD~3..HEAD -- "*.gleam" 2>/dev/null | grep -E "Error\(.*\)|Ok\(.*\)"; then
+    echo "✅ Result type usage detected - good error handling patterns"
+fi
+echo ""
+
+# Actor model integrity check
+echo "🎭 Actor model analysis:"
+if git diff HEAD~3..HEAD -- "*.gleam" 2>/dev/null | grep -E "(actor\.|Subject\(|process\.)"; then
+    echo "📡 ACTOR PATTERNS DETECTED"
+    if git diff HEAD~3..HEAD -- "*.gleam" 2>/dev/null | grep -E "(actor\.call|actor\.send)"; then
+        echo "   📞 Message passing patterns found"
+    fi
+    if git diff HEAD~3..HEAD -- "*.gleam" 2>/dev/null | grep -E "(supervisor|start_link)"; then
+        echo "   🌳 Supervision tree patterns found"
+    fi
+else
+    echo "ℹ️ No actor model patterns detected"
+fi
+echo ""
+
+# Dependency analysis
+echo "📦 Dependency analysis:"
+if [[ -f "gleam.toml" ]]; then
+    echo "✅ Gleam project detected"
+    if git diff HEAD~3..HEAD gleam.toml 2>/dev/null | grep "^\+"; then
+        echo "📋 New dependencies added:"
+        git diff HEAD~3..HEAD gleam.toml | grep "^\+" | grep -v "^\+++" | sed 's/^\+//' | head -5
+        echo "⚠️  FUNCTIONAL PATTERN REVIEW REQUIRED for new dependencies"
+    else
+        echo "✅ No new dependencies"
+    fi
+else
+    echo "❌ No gleam.toml found - not a Gleam project"
+fi
+echo ""
+
+# Show recent code changes for development context
+echo "📊 Recent code changes for development:"
+if git diff --unified=3 HEAD~3..HEAD -- "*.gleam" >/dev/null 2>&1; then
+    git diff --unified=3 HEAD~3..HEAD -- "*.gleam" | head -50
+    if [[ $(git diff HEAD~3..HEAD -- "*.gleam" | wc -l) -gt 50 ]]; then
+        echo "... (truncated - large changeset detected)"
+    fi
+else
+    echo "No recent Gleam code changes"
+fi
+echo ""
+
+echo "🎯 Gleam Expert Agent ready for:"
+echo "   • Architecture design and planning"
+echo "   • New Gleam code implementation"
+echo "   • Functional pattern development"
+echo "   • Actor model design"
+echo "   • Type system architecture"
+echo "   • Teaching and explanation"
+echo ""
+echo "💡 Ready to build, teach, and architect!"
